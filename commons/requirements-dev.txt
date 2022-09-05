@@ -1,0 +1,30 @@
+-r ./requirements.txt
+
+
+watchdog[watchmedo]
+
+black
+isort
+
+boto3-stubs[s3]
+sqlalchemy[mypy]
+types-requests
+types-PyYAML
+types-cachetools
+types-redis
+types-pytz
+types-aiofiles
+types-ujson
+types-certifi
+types-python-dateutil
+types-setuptools
+types-toml
+
+pip-tools
+
+# [ TEST ] 
+pytest
+asphalt
+mypy
+pytest_postgresql # for janitor
+psycopg[binary] # for janitor

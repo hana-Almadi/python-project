@@ -1,0 +1,189 @@
+version: "3.9"
+
+x-common-envs:
+  &common-envs
+
+  DB_HOST: "db"
+  DB_USER: "postgres"
+  DB_PASSWORD: "password"
+  DB_PORT: 5432
+
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+
+  LOGGING_LEVEL: DEBUG
+
+  SMTP_HOST: "mailhog"
+  SMTP_PORT: 1025
+  SMTP_SENDER: "local-sender"
+
+x-app1-envs:
+  &app1-envs
+  <<: *common-envs
+  APP_NAME: "app1"
+  DB_NAME: "app1_db"
+  CELERY_BROKER_URL: redis://redis:6379/1
+  REDIS_DB: 0
+  AUTH_SALT: "74d50c79-8252-4c82-a3e1-627fce3b0f1b"
+  AUTH_JWT_KEY: "73b17a31-b7ef-4145-a538-b259414bbe4a"
+  AUTH_TOKEN_EXPIRE_IN: 600
+
+
+x-app1-build-volumes:
+  &app1-build-volumes
+  build:
+    context: .
+    dockerfile: "./Dockerfile"
+    args:
+      APP_NAME: app1
+  volumes:
+    - ./commons/:/app/commons
+    - ./app1/:/app/app1
+    - ./conftest.py:/app/conftest.py
+    - ./.github/linters/tox.ini:/app/tox.ini
+  environment:
+    <<: *app1-envs
+
+x-app2-envs:
+  &app2-envs
+  <<: *common-envs
+  APP_NAME: "app2"
+  DB_NAME: "app2_db"
+  CELERY_BROKER_URL: redis://redis:6379/3
+  REDIS_DB: 1
+  AUTH_JWT_KEY: "73b17a31-b7ef-4145-a538-b259414bbe4a"
+
+
+
+x-app2-build-volumes:
+  &app2-build-volumes
+  build:
+    context: .
+    dockerfile: "./Dockerfile"
+    args:
+      APP_NAME: app2
+  volumes:
+    - ./commons/:/app/commons
+    - ./app2/:/app/app2
+    - ./conftest.py:/app/conftest.py
+    - ./.github/linters/tox.ini:/app/tox.ini
+  environment:
+    <<: *app2-envs
+
+services:
+  # < =========================================================== >
+  # < ==================== COMMON SERVICES ====================== >
+  # < =========================================================== >
+  db:
+    ports:
+      - "5440:5432"
+    image: postgres
+    volumes:
+      - datebase:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: password
+
+  redis:
+    image: redis
+    ports:
+      - "6380:6379"
+
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - 1025:1025 # smtp server
+      - 8025:8025 # web ui. Visit http://localhost:8025/ to check emails
+    restart: unless-stopped
+    logging:
+      driver: none
+
+  # < =========================================================== >
+  # < ===================== APP1 SERVICES ======================= >
+  # < =========================================================== >
+
+  app1-api:
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - app1-celery
+      - app1-celery-beat
+    ports:
+      - "3001:80"
+    command: /start-reload.sh
+    <<: *app1-build-volumes
+
+  app1-pytest:
+    depends_on:
+      - db
+      - redis
+      - mailhog
+    command: pytest
+    <<: *app1-build-volumes
+    environment:
+      <<: *app1-envs
+      ENVIRONMENT: "testing"
+      DB_NAME: "app1_testing"
+
+  app1-celery:
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - db
+      - mailhog
+    command: watchmedo auto-restart -p="*.py" -R celery -- -A app1.celery_worker.worker worker --loglevel=debug
+    <<: *app1-build-volumes
+  
+  app1-celery-beat:
+    restart: unless-stopped
+    depends_on:
+      - redis
+    command: "celery -A app1.celery_worker.beat beat --loglevel=debug"
+    <<: *app1-build-volumes
+
+  # < =========================================================== >
+  # < ===================== APP2 SERVICES ======================= >
+  # < =========================================================== >
+
+  app2-api:
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - app2-celery
+      - app2-celery-beat
+    ports:
+      - "3002:80"
+    command: /start-reload.sh
+    <<: *app2-build-volumes
+
+  app2-pytest:
+    depends_on:
+      - db
+      - redis
+      - mailhog
+    command: pytest
+    <<: *app2-build-volumes
+    environment:
+      <<: *app2-envs
+      ENVIRONMENT: "testing"
+      DB_NAME: "app2_testing"
+
+  app2-celery:
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - db
+      - mailhog
+    command: watchmedo auto-restart -p="*.py" -R celery -- -A app2.celery_worker.worker worker --loglevel=debug
+    <<: *app2-build-volumes
+
+  app2-celery-beat:
+    restart: unless-stopped
+    depends_on:
+      - redis
+    command: "celery -A app2.celery_worker.beat beat --loglevel=debug"
+    <<: *app2-build-volumes
+
+volumes:
+  datebase:
